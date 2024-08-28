@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	_ "fmt"
 	_ "github.com/go-kivik/kivik/v4/kiviktest/client"
-	"github.com/go-kivik/kiviktest/v3/client"
 	"log"
 	"net/http"
 
@@ -18,9 +16,8 @@ var db *kivik.DB
 
 // Struct representing a student
 type Student struct {
-	ID     string `json:"_id,omitempty"`  // CouchDB document ID (optional for insert)
-	Rev    string `json:"_rev,omitempty"` // CouchDB revision ID (used for updates)
-	Name   string `json:"name"`
+	ID     string `json:"_id,omitempty"`
+	Rev    string `json:"_rev,omitempty"`
 	Email  string `json:"email"`
 	Course string `json:"course"`
 	Age    int    `json:"age"`
@@ -46,12 +43,12 @@ func main() {
 	// Routes
 	r.POST("/documents", insertDocument)
 	r.GET("/documents", readAllDocuments)
-	r.POST("/upload", uploadFileHandler)
+	r.GET("/documents/:id", getDocumentByID)
+	r.POST("/upload", uploadFile)
 	//r.GET("/files/:id/:filename", getFile)
 	r.GET("/documents/filter", filterDocuments)
 	r.PUT("/documents/:id", updateDocument)
-	//r.DELETE("/delete", deleteDocument)
-	http.HandleFunc("/delete", deleteDocumentHandler)
+	r.DELETE("/documents/:id", deleteDocument)
 	r.Run(":8080") // Listen and serve on port 8080
 }
 
@@ -73,42 +70,7 @@ func insertDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Document inserted successfully", "document_id": docID})
 }
 
-//	func uploadFileHandler(c *gin.Context) {
-//		docID := c.PostForm("docID")
-//		file, err := c.FormFile("file")
-//		if err != nil {
-//			c.JSON(http.StatusBadRequest, gin.H{"error": "File form parsing error: " + err.Error()})
-//			return
-//		}
-//
-//		doc := make(map[string]interface{})
-//		err = db.Get(context.TODO(), docID).ScanDoc(&doc)
-//		if err != nil {
-//			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get document: " + err.Error()})
-//			return
-//		}
-//		rev, _ := doc["_rev"].(string)
-//
-//		openedFile, err := file.Open()
-//		if err != nil {
-//			c.JSON(http.StatusInternalServerError, gin.H{"error": "File opening error: " + err.Error()})
-//			return
-//		}
-//		defer openedFile.Close()
-//
-//		_, err = db.PutAttachment(context.TODO(), docID, file.Filename, &kivik.Attachment{
-//			Filename:    file.Filename,
-//			Content:     openedFile,
-//			ContentType: file.Header.Get("Content-Type"),
-//		}, kivik.Options{"rev": rev})
-//		if err != nil {
-//			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload attachment: " + err.Error()})
-//			return
-//		}
-//
-//		c.JSON(http.StatusOK, gin.H{"status": "File uploaded successfully"})
-//	}
-func uploadFileHandler(c *gin.Context) {
+func uploadFile(c *gin.Context) {
 	docID := c.Param("docID")
 	filename := c.Param("filename")
 	rev := c.Query("rev")
@@ -126,7 +88,6 @@ func uploadFileHandler(c *gin.Context) {
 	}
 	defer openedFile.Close()
 
-	// Put attachment to CouchDB
 	_, err = db.PutAttachment(context.TODO(), docID, filename, &kivik.Attachment{
 		Filename:    filename,
 		Content:     openedFile,
@@ -140,63 +101,6 @@ func uploadFileHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "File uploaded successfully"})
 }
-
-//
-//// Upload file to CouchDB
-//func uploadFile(c *gin.Context) {
-//	docID := c.PostForm("docID")
-//	file, err := c.FormFile("file")
-//	//file, header, err := c.Request.FormFile("file")
-//	if err != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file"})
-//		return
-//	}
-//	defer file.Close()
-//
-//	docID := c.PostForm("id")
-//	rev := c.PostForm("rev")
-//	rev, _ := doc["_rev"].(string)
-//	openedFile, err := file.Open()
-//	attachment := &driver.Attachment{
-//		Filename:    header.Filename,
-//		ContentType: header.Header.Get("Content-Type"),
-//		Content:     file,
-//	}
-//
-//	// Save the attachment to the specified document
-//	_, err = db.PutAttachment(context.Background(), docID, attachment.Filename, attachment.rev, attachment.attachment)
-//	if err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload file: %v", err)})
-//		return
-//	}
-//
-//	c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully"})
-//}
-//
-//// getFile handles retrieving a file from a CouchDB document
-//func getFile(c *gin.Context) {
-//	docID := c.Param("id") // The ID of the document to get the file from
-//	attachmentName := c.Query("attachment_name")
-//
-//	// Get the attachment from the document
-//	att, err := db.GetAttachment(context.Background(), docID, attachmentName)
-//	if err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve attachment"})
-//		return
-//	}
-//	defer att.Content.Close()
-//
-//	// Set the content type header to the attachment's content type
-//	c.Writer.Header().Set("Content-Type", att.ContentType)
-//	c.Writer.Header().Set("Content-Disposition", "attachment; filename="+attachmentName)
-//
-//	// Write the content of the attachment to the response
-//	_, err = c.Writer.Write(att.Content)
-//	if err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send attachment content"})
-//		return
-//	}
-//}
 
 // Read all documents
 func readAllDocuments(c *gin.Context) {
@@ -265,54 +169,53 @@ func filterDocuments(c *gin.Context) {
 // Update an existing document
 func updateDocument(c *gin.Context) {
 	id := c.Param("id")
-	var updatedDoc map[string]interface{}
-	if err := c.BindJSON(&updatedDoc); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
+	rev := c.Query("rev")
 
-	// Retrieve the current document to get the latest revision ID
-	doc := db.Get(c, id)
-	err := db.Get(c, id)
+	// Fetch existing document
+	err := db.Get(context.Background(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Document not found"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
 
-	// Read the existing document to get the revision ID
-	var existingDoc map[string]interface{}
-	if err := doc.ScanDoc(&existingDoc); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read document"})
+	var updateData map[string]interface{}
+	if err := c.BindJSON(&updateData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Update the document with the new data
-	updatedDoc["_rev"] = existingDoc["_rev"]
+	// Ensure revision is included in the update
+	updateData["_rev"] = rev
 
-	rev, ok := existingDoc["_rev"].(string)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to convert revision ID to string"})
+	// Check for and handle potential type mismatches in the update data
+	for key, value := range updateData {
+		switch v := value.(type) {
+		case float64: // JSON numbers are float64 by default
+			// Optionally convert float64 to int if needed
+			updateData[key] = int(v)
+		case string, bool:
+			// Handle other types if necessary
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid data type"})
+			return
+		}
+	}
+
+	_, putErr := db.Put(context.Background(), id, updateData)
+	if putErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": putErr})
 		return
 	}
-	updatedDoc["_rev"] = rev
-
-	c.JSON(http.StatusOK, gin.H{"message": "Document updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"status": "Document updated"})
 }
-func deleteDocumentHandler(w http.ResponseWriter, r *http.Request) {
-	// Get the document ID from the query parameters
-	docID := r.URL.Query().Get("id")
-	if docID == "" {
-		http.Error(w, "Document ID is required", http.StatusBadRequest)
-		return
-	}
 
-	// Delete the document from CouchDB
-	err := client.Delete(db, docID)
+func deleteDocument(c *gin.Context) {
+	id := c.Param("id")
+	rev := c.Query("rev")
+	_, err := db.Delete(context.Background(), id, rev)
 	if err != nil {
-		http.Error(w, "Error deleting document", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, "Document deleted successfully")
+	c.JSON(http.StatusOK, gin.H{"status": "Document deleted"})
 }
